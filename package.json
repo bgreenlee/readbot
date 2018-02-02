@@ -1,0 +1,21 @@
+{
+  "name": "slack-bookbot",
+  "version": "1.0.0",
+  "description": "Goodreads integration with Slack",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "Brad Greenlee <brad@footle.org>",
+  "dependencies": {
+    "axios": "^0.13.1",
+    "ws": "^1.1.1",
+    "request": "^2.83.0",
+    "mongodb": "*",
+    "synchronize": "^0.9.14",
+    "httpdispatcher": "*",
+    "goodreads": "^0.1.0",
+    "express": "^4.16.2",
+    "body-parser": "^1.18.2"
+  },
+  "license": "MIT"
+}

@@ -2,15 +2,16 @@
 
 const express = require('express');
 const datastore = require("./datastore");
-const goodreads = require('./goodreads');
+const goodreads = require('goodreads-api-node');
 const bodyParser = require('body-parser');
 const request = require('request');
 const fs = require('fs');
 
-var gr = goodreads.client({
+var gr = goodreads({
   key: process.env.GOODREADS_DEVELOPER_KEY,
-  secret: process.env.GOODREADS_DEVELOPER_SECRET,
-  callback: "https://bookbot.glitch.me/auth/goodreads/" });
+  secret: process.env.GOODREADS_DEVELOPER_SECRET
+});
+gr.callbackUrl = "https://bookbot.glitch.me/auth/goodreads/";
 
 let app = express();
 app.use(express.json());
@@ -34,11 +35,9 @@ app.post('/command', function(req, res) {
   
   switch(command) {
     case "connect goodreads":
-      gr.options.callback += user_id;
-      gr.requestToken().then(result => {
-        datastore.updateUser(user_id, {goodreads:{oauth_token: result.oauthToken, oauth_token_secret: result.oauthTokenSecret}});
-        console.log("oauth", result);
-        res.send({channel: user_id, text: "Please visit " + result.url + " to authenticate to Goodreads"});
+      gr.initOAuth(gr.callbackUrl + user_id);
+      gr.getRequestToken().then(url => {
+        res.send({channel: user_id, text: `Please visit ${url} to authenticate to Goodreads`});
       });
       break;
     case "help":
@@ -62,8 +61,9 @@ app.get('/auth/:service/:user_id', function(req, res) {
       let authorized = req.query.authorize == "1";
       // exchange this oauth token for an access token
       var user = datastore.readUser(user_id);
-      gr.processCallback(user.goodreads.oauth_token, user.goodreads.oauth_token_secret, req.query.authorize, (result) =>  {
-          user = datastore.updateUser(user_id, {goodreads:{access_token:result.accessToken, access_token_secret:result.accessTokenSecret}});
+      gr.getAccessToken().then(token =>  {
+          console.log("got tokens:", token);
+          user = datastore.updateUser(user_id, {goodreads:{access_token:token.accessToken, access_token_secret:token.accessTokenSecret}});
           console.log("updated user", user);
         });
       res.status(200).send("Thank you. You can close this now. <script type='text/javascript'>window.close()</script>");
@@ -102,11 +102,12 @@ app.post('/event', function(req, res) {
     case 'reaction_added':
       if (event.reaction == 'bookmark') {
         var item = event.item;
-        console.log("added bookmark for item:", item);
+        var user_id = event.user;
+        console.log(`added bookmark for user ${user_id}, item:`, item);
         var urls = datastore.getUrlsForMessage(item);
         console.log("found urls:", urls);
         urls.forEach((url) => {
-          importUrl(url);
+          importUrl(user_id, url);
         });
       }
       break;
@@ -121,7 +122,10 @@ app.post('/event', function(req, res) {
   res.sendStatus(200);
 });
 
-function importUrl(url) {
+function importUrl(user_id, url) {
+  var user = datastore.readUser(user_id);
+  gr.setAccessToken({ACCESS_TOKEN: user.goodreads.access_token, ACCESS_TOKEN_SECRET: user.goodreads.access_token_secret});
+  gr.initOAuth();
   if (isAmazonUrl(url)) {
     request({uri: url, gzip: true},  (error, response, body) => {
       // console.log("requested:",url);
@@ -142,8 +146,18 @@ function importUrl(url) {
         var title = matches[1];
         title = title.replace(/(Amazon\.com:|eBook:|: Kindle Store)\s*/g, ''); // clear out Amazon junk
         console.log("found title:", title);
-        gr.searchBooks(title).then(response => {
+        gr.searchBooks({q: title}).then(response => {
           console.log("goodreads response:", JSON.stringify(response));
+          let bookId = response.search.results.work.best_book.id._;
+          console.log("book id", bookId);
+          gr.addBookToShelf(bookId, "to-read")
+            .then(res => {
+              // TODO: if they already had it on their shelf, let them know
+              console.log("addBookToShelf:", res);
+            })
+            .catch(err => {
+              console.log("addBookToShelf error:", err);
+          });
         })
         .catch(reason => {
           console.log("goodreads failed:", reason);
@@ -161,7 +175,7 @@ function importUrl(url) {
 }
 
 function isAmazonUrl(url) {
-  return url.match(/^https?:\/\/(www\.)?amazon\./) !== null;
+  return url.match(/^https?:\/\/(\w+\.)?amazon\./) !== null;
 }
 
 // Set Express to listen out for HTTP requests

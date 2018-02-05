@@ -1,15 +1,17 @@
-# Slack Slash Command Response Handler
+# ReadBot
 
-This project demonstrates responding to Slash commands in Slack, using MongoDB for persistence.
+ReadBot is a Slack bot that makes it easy to save books and articles to your
+Goodreads and Pocket accounts.
 
-The app implements a simple counter, incrementing the counter each time the `/count` Slash Command is used. This app provides a basic template that you can [remix](https://glitch.com/edit/#!/remix/SlashCommands/a9e55c25-bf40-4162-b1b5-dc33047c0cdc) to create your own Slash Command handler.
+## Usage
 
-![Screen Shot 2016-08-11 at 10.08.34](https://hyperdev.wpengine.com/wp-content/uploads/2016/08/Screen-Shot-2016-08-11-at-10.08.34.png)
+First, connect your accounts:
 
-## Getting Started
-To get started you need to:
-- Add a Slash Command configuration to your Slack integrations
-- Copy the generated Command Token
-- Add your database credentials along with the token to the `.env` file
+`/readbot connect goodreads`
+`/readbot connect pocket`
 
-For more detailed setup instructions, see `setup.md`.
+Then add the `bookmark` reactji to any message containing a supported link (currently Amazon.com for books, or any other link for Pocket), and it will be saved to your account.
+
+## Author
+
+Brad Greenlee <brad@footle.org>

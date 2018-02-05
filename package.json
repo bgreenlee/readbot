@@ -17,7 +17,11 @@
     "xml2js": "^0.4.19",
     "oauth": "^0.9.15",
     "utils": "^0.3.1",
-    "querystring": "^0.2.0"
+    "querystring": "^0.2.0",
+    "goodreads-api-node": "bgreenlee/goodreads-api-node#HEAD"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": "9.4.x"
+  }
 }

@@ -1,21 +1,23 @@
 {
-  "name": "slack-bookbot",
+  "name": "slack-readbot",
   "version": "1.0.0",
-  "description": "Goodreads integration with Slack",
+  "description": "Goodreads & Pocket integration with Slack",
+  "repository": "https://github.com/bgreenlee/readbot",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "author": "Brad Greenlee <brad@footle.org>",
   "dependencies": {
-    "axios": "^0.13.1",
-    "ws": "^1.1.1",
     "request": "^2.83.0",
-    "mongodb": "*",
-    "synchronize": "^0.9.14",
-    "httpdispatcher": "*",
-    "goodreads": "^0.1.0",
+    "synchronize": "^2.0.0",
     "express": "^4.16.2",
-    "body-parser": "^1.18.2"
+    "body-parser": "^1.18.2",
+    "deepmerge": "^2.0.1",
+    "better-sqlite3": "^4.1.0",
+    "xml2js": "^0.4.19",
+    "oauth": "^0.9.15",
+    "utils": "^0.3.1",
+    "querystring": "^0.2.0"
   },
   "license": "MIT"
 }

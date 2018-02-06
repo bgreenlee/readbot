@@ -111,7 +111,14 @@ app.post('/event', function(req, res) {
         var urls = datastore.getUrlsForMessage(item);
         console.log("found urls:", urls);
         urls.forEach((url) => {
-          importUrl(channel, user_id, url);
+          importUrl(user_id, url).then(response => {
+            slackWeb.chat.postEphemeral(channel, response, user_id)
+                .catch(console.error);
+          })
+          .catch(err => {
+            slackWeb.chat.postEphemeral(channel, err, user_id)
+                .catch(console.error);
+          })
         });
       }
       break;
@@ -174,52 +181,52 @@ function getTitleFromUrl(url) {
   });
 }
 
-function importUrl(channel, user_id, url) {
-  if (!authUserToGoodreads(user_id)) {
-    // TODO: prompt user to connect their account
-    console.log(`Error: User ${user_id} not authed to Goodreads!`);
-    return;
-  }
+function importUrl(user_id, url) {
+  return new Promise((resolve, reject) => {
+    if (!authUserToGoodreads(user_id)) {
+      reject("Your Goodreads account does not appear to be connected. Please do `/readbot connect goodreads`");
+    }
 
-  let shelf = "to-read";
-  getTitleFromUrl(url).then(title => {
-    gr.searchBooks({q: title}).then(response => {
-      console.log("goodreads response:", JSON.stringify(response));
-      var book_id;
-      var book_title;
-      try {
-        var found_book = response.search.results.work.best_book;
-        book_id = found_book.id._;
-        book_title = found_book.title;
-      } catch(e) {
-        // TODO: handle the case where the book is not found; return an error to the user
-        console.error("could not find book_id");
-      }
+    let shelf = "to-read";
+    getTitleFromUrl(url).then(title => {
+      gr.searchBooks({q: title}).then(response => {
+        console.log("goodreads response:", JSON.stringify(response));
+        var book_id;
+        var book_title;
+        try {
+          var found_book = response.search.results.work.best_book;
+          book_id = found_book.id._;
+          book_title = found_book.title;
+        } catch(e) {
+          reject("I couldn't find that book on Goodreads. You could try <https://www.goodreads.com/search?q=" + encodeURIComponent(title) + "|searching for it.");
+        }
 
-      if (book_id) {
-        // TODO: handle the case where multiple matches are found? Could give the user a list and ask them to pick one, or provide them with a search link
-        console.log("book id", book_id);
-        // TODO: use the user's preferred shelf, if set
-        // TODO: handle the case where the shelf doesn't exist (at least return an error to the user)
-        gr.addBookToShelf(book_id, shelf)
-          .then(res => {
-            // TODO: if they already had it on their shelf, let them know
-            console.log("addBookToShelf:", res);
-            // See: https://api.slack.com/methods/chat.postMessage
-            slackWeb.chat.postEphemeral(channel, `Added <https://www.goodreads.com/book/show/${book_id}|${book_title}> to your _${shelf}_ shelf on Goodreads`, user_id)
-              .catch(console.error);
-          })
-          .catch(err => {
-            console.log("addBookToShelf error:", err);
-        });
-      }
+        if (book_id) {
+          // TODO: handle the case where multiple matches are found? Could give the user a list and ask them to pick one, or provide them with a search link
+          console.log("book id", book_id);
+          // TODO: use the user's preferred shelf, if set
+          // TODO: handle the case where the shelf doesn't exist (at least return an error to the user)
+          gr.addBookToShelf(book_id, shelf)
+            .then(res => {
+              // TODO: if they already had it on their shelf, let them know
+              resolve(`Added <https://www.goodreads.com/book/show/${book_id}|${book_title}> to your _${shelf}_ shelf on Goodreads`);
+            })
+            .catch(err => {
+              console.log("addBookToShelf error:", err);
+              reject(`Arg, Goodreads gave me an error when I tried to add the book to your shelf. It said "${err}." ¯\_(ツ)_/¯`);
+          });
+        }
+      })
+      .catch(reason => {
+        // TODO: give feedback if search failed
+        console.error("goodreads failed:", reason);
+        reject(`Shoot. Goodreads gave me an error when I tried to search for that book. It said "${reason}."`);
+      });
     })
-    .catch(reason => {
-      // TODO: give feedback if search failed
-      console.error("goodreads failed:", reason);
+    .catch(msg => {
+      reject(`Sorry, I couldn't figure out what book was in that url: ${msg}`);
     });
-  })
-  .catch(console.error); // TODO: send error to user
+  });
 }
 
 // Set Express to listen out for HTTP requests

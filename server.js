@@ -5,7 +5,9 @@ const datastore = require("./datastore");
 const goodreads = require('goodreads-api-node');
 const bodyParser = require('body-parser');
 const request = require('request');
-const fs = require('fs');
+const { WebClient } = require('@slack/client');
+
+const slackWeb = new WebClient(process.env.SLACK_ACCESS_TOKEN);
 
 var gr = goodreads({
   key: process.env.GOODREADS_DEVELOPER_KEY,
@@ -25,7 +27,7 @@ app.get('/', function (req, res) {
 app.post('/command', function(req, res) {
   // console.log("command params", req.params);
   console.log("command body", req.body);
-  if (req.body.token != process.env.SLACK_TOKEN) {
+  if (req.body.token != process.env.SLACK_VERIFICATION_TOKEN) {
     console.log("Invalid Slack token");
     return;
   }
@@ -65,6 +67,7 @@ app.get('/auth/:service/:user_id', function(req, res) {
           console.log("got tokens:", token);
           user = datastore.updateUser(user_id, {goodreads:{access_token:token.accessToken, access_token_secret:token.accessTokenSecret}});
           console.log("updated user", user);
+          // TODO: check that the user has a "to-read" shelf and prompt them to set a default shelf if not
         });
       res.status(200).send("Thank you. You can close this now. <script type='text/javascript'>window.close()</script>");
       break;
@@ -75,7 +78,7 @@ app.get('/auth/:service/:user_id', function(req, res) {
 
 app.post('/event', function(req, res) {
   console.log("event:", req.body);
-  if (req.body.token != process.env.SLACK_TOKEN) {
+  if (req.body.token != process.env.SLACK_VERIFICATION_TOKEN) {
     console.log("Invalid Slack token");
     return;
   }
@@ -102,12 +105,13 @@ app.post('/event', function(req, res) {
     case 'reaction_added':
       if (event.reaction == 'bookmark') {
         var item = event.item;
+        var channel = item.channel;
         var user_id = event.user;
         console.log(`added bookmark for user ${user_id}, item:`, item);
         var urls = datastore.getUrlsForMessage(item);
         console.log("found urls:", urls);
         urls.forEach((url) => {
-          importUrl(user_id, url);
+          importUrl(channel, user_id, url);
         });
       }
       break;
@@ -122,60 +126,100 @@ app.post('/event', function(req, res) {
   res.sendStatus(200);
 });
 
-function importUrl(user_id, url) {
+function authUserToGoodreads(user_id) {
   var user = datastore.readUser(user_id);
-  gr.setAccessToken({ACCESS_TOKEN: user.goodreads.access_token, ACCESS_TOKEN_SECRET: user.goodreads.access_token_secret});
-  gr.initOAuth();
-  if (isAmazonUrl(url)) {
-    request({uri: url, gzip: true},  (error, response, body) => {
-      // console.log("requested:",url);
-      // console.log("body:",body);
-      if (error) {
-        console.log('error:', error); // Print the error if one occurred
-        return;
-      }
-      if (!body && response && response.statusCode !== 200) {
-        console.log('statusCode:', response && response.statusCode);
-        return;
-      }
-      // parse out title
-      // <meta name="title" content="Amazon.com: The Dispossessed: An Ambiguous Utopia (Hainish Cycle Book 5) eBook: Ursula K. Le Guin: Kindle Store" />
-      var matches = body.match(/<meta\s+name\s*=\s*"title"\s+content\s*=\s*"(.*?)"/);
-      //console.log("matches:",matches);
-      if (matches) {
-        var title = matches[1];
-        title = title.replace(/(Amazon\.com:|eBook:|: Kindle Store)\s*/g, ''); // clear out Amazon junk
-        console.log("found title:", title);
-        gr.searchBooks({q: title}).then(response => {
-          console.log("goodreads response:", JSON.stringify(response));
-          let bookId = response.search.results.work.best_book.id._;
-          console.log("book id", bookId);
-          gr.addBookToShelf(bookId, "to-read")
-            .then(res => {
-              // TODO: if they already had it on their shelf, let them know
-              console.log("addBookToShelf:", res);
-            })
-            .catch(err => {
-              console.log("addBookToShelf error:", err);
-          });
-        })
-        .catch(reason => {
-          console.log("goodreads failed:", reason);
-        });
-      } else {
-        // should send response back, but need to figure out how
-        console.log("Couldn't find a title in url:", url);
-        console.log("headers:",response.headers);
-        console.log("body:",body);
-        //console.log("response:",response);
-        console.log("statusCode:",response.statusCode);
-      }
-    });
+  
+  if (user && user.goodreads && user.goodreads.access_token) {
+    gr.setAccessToken({ACCESS_TOKEN: user.goodreads.access_token, ACCESS_TOKEN_SECRET: user.goodreads.access_token_secret});
+    gr.initOAuth();
+    return true;
   }
+
+  return false;
 }
 
-function isAmazonUrl(url) {
-  return url.match(/^https?:\/\/(\w+\.)?amazon\./) !== null;
+function getTitleFromUrl(url) {
+  function isAmazonUrl(url) {
+    return url.match(/^https?:\/\/(\w+\.)?amazon\./) !== null;
+  }
+
+  return new Promise((resolve, reject) => {
+    if (isAmazonUrl(url)) {
+      request({uri: url, gzip: true},  (error, response, body) => {
+        if (error) {
+          console.log('error:', error); // Print the error if one occurred
+          reject(`request for ${url} returned error: ${error}`);
+        }
+        if (!body && response && response.statusCode !== 200) {
+          console.log('statusCode:', response && response.statusCode);
+          reject(`request for ${url} return response: ${response}`);
+        }
+        
+        // parse out title
+        // <meta name="title" content="Amazon.com: The Dispossessed: An Ambiguous Utopia (Hainish Cycle Book 5) eBook: Ursula K. Le Guin: Kindle Store" />
+        var matches = body.match(/<meta\s+name\s*=\s*"title"\s+content\s*=\s*"(.*?)"/);
+        //console.log("matches:",matches);
+        if (matches) {
+          var title = matches[1];
+          title = title.replace(/(Amazon\.com:|eBook:|: Kindle Store)\s*/g, ''); // clear out Amazon junk
+          resolve(title);
+        } else {
+          // TODO: respond to user
+          reject(`could not find title in ${url}`);
+        }
+      });
+    } else {            
+      reject(`unsupported url ${url}`);
+    }
+  });
+}
+
+function importUrl(channel, user_id, url) {
+  if (!authUserToGoodreads(user_id)) {
+    // TODO: prompt user to connect their account
+    console.log(`Error: User ${user_id} not authed to Goodreads!`);
+    return;
+  }
+
+  let shelf = "to-read";
+  getTitleFromUrl(url).then(title => {
+    gr.searchBooks({q: title}).then(response => {
+      console.log("goodreads response:", JSON.stringify(response));
+      var book_id;
+      var book_title;
+      try {
+        var found_book = response.search.results.work.best_book;
+        book_id = found_book.id._;
+        book_title = found_book.title;
+      } catch(e) {
+        // TODO: handle the case where the book is not found; return an error to the user
+        console.error("could not find book_id");
+      }
+
+      if (book_id) {
+        // TODO: handle the case where multiple matches are found? Could give the user a list and ask them to pick one, or provide them with a search link
+        console.log("book id", book_id);
+        // TODO: use the user's preferred shelf, if set
+        // TODO: handle the case where the shelf doesn't exist (at least return an error to the user)
+        gr.addBookToShelf(book_id, shelf)
+          .then(res => {
+            // TODO: if they already had it on their shelf, let them know
+            console.log("addBookToShelf:", res);
+            // See: https://api.slack.com/methods/chat.postMessage
+            slackWeb.chat.postEphemeral(channel, `Added <https://www.goodreads.com/book/show/${book_id}|${book_title}> to your _${shelf}_ shelf on Goodreads`, user_id)
+              .catch(console.error);
+          })
+          .catch(err => {
+            console.log("addBookToShelf error:", err);
+        });
+      }
+    })
+    .catch(reason => {
+      // TODO: give feedback if search failed
+      console.error("goodreads failed:", reason);
+    });
+  })
+  .catch(console.error); // TODO: send error to user
 }
 
 // Set Express to listen out for HTTP requests

@@ -18,7 +18,8 @@
     "oauth": "^0.9.15",
     "utils": "^0.3.1",
     "querystring": "^0.2.0",
-    "goodreads-api-node": "bgreenlee/goodreads-api-node#HEAD"
+    "goodreads-api-node": "bgreenlee/goodreads-api-node#HEAD",
+    "@slack/client": "^3.16.0"
   },
   "license": "MIT",
   "engines": {

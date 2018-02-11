@@ -9,15 +9,10 @@
   "author": "Brad Greenlee <brad@footle.org>",
   "dependencies": {
     "request": "^2.83.0",
-    "synchronize": "^2.0.0",
     "express": "^4.16.2",
     "body-parser": "^1.18.2",
     "deepmerge": "^2.0.1",
     "better-sqlite3": "^4.1.0",
-    "xml2js": "^0.4.19",
-    "oauth": "^0.9.15",
-    "utils": "^0.3.1",
-    "querystring": "^0.2.0",
     "goodreads-api-node": "bgreenlee/goodreads-api-node#HEAD",
     "@slack/client": "^3.16.0",
     "html-entities": "^1.2.1"

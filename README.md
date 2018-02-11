@@ -7,8 +7,10 @@ Goodreads and Pocket accounts.
 
 First, connect your accounts:
 
-`/readbot connect goodreads`
-`/readbot connect pocket`
+```
+/readbot connect goodreads
+/readbot connect pocket
+```
 
 Then add the `bookmark` reactji to any message containing a supported link (currently Amazon.com for books, or any other link for Pocket), and it will be saved to your account.
 

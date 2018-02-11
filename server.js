@@ -1,13 +1,14 @@
 "use strict";
 
 const express = require('express');
-const datastore = require("./datastore");
 const goodreads = require('goodreads-api-node');
-const Pocket = require('./pocket');
 const bodyParser = require('body-parser');
 const request = require('request');
 const { WebClient } = require('@slack/client');
 const Entities = require('html-entities').AllHtmlEntities;
+
+const datastore = require("./lib/datastore");
+const Pocket = require('./lib/pocket');
 
 const entities = new Entities();
 
@@ -206,7 +207,6 @@ function getTitleFromUrl(url) {
 //           // title = entities.decode(title).replace(/\W/g, '').replace(/(Amazoncom|eBooks?|Kindle (edition|Store))/gi, ''); // clear out Amazon junk
 //           resolve(title);
 //         } else {
-//           // TODO: respond to user
 //           reject(`could not find title in ${url}`);
 //         }
 //       });

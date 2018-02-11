@@ -3,9 +3,13 @@
 const express = require('express');
 const datastore = require("./datastore");
 const goodreads = require('goodreads-api-node');
+const Pocket = require('./pocket');
 const bodyParser = require('body-parser');
 const request = require('request');
 const { WebClient } = require('@slack/client');
+const Entities = require('html-entities').AllHtmlEntities;
+
+const entities = new Entities();
 
 const slackWeb = new WebClient(process.env.SLACK_ACCESS_TOKEN);
 
@@ -15,6 +19,8 @@ var gr = goodreads({
 });
 gr.callbackUrl = "https://bookbot.glitch.me/auth/goodreads/";
 
+var pocket = new Pocket(process.env.POCKET_CONSUMER_KEY);
+                        
 let app = express();
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
@@ -41,6 +47,15 @@ app.post('/command', function(req, res) {
       gr.getRequestToken().then(url => {
         res.send({channel: user_id, text: `Please visit ${url} to authenticate to Goodreads`});
       });
+      break;
+    case "connect pocket":
+      var redirect_uri = `https://bookbot.glitch.me/auth/pocket/${user_id}`;
+      pocket.getRequestToken(redirect_uri).then(token => {
+        var url = pocket.getUserAuthUrl(token, redirect_uri);
+        datastore.updateUser(user_id, {pocket: {request_token: token}});
+        res.send({channel: user_id, text: `Please visit ${url} to authenticate to Pocket`});
+      })
+      .catch(error => res.send({channel: user_id, text: `There was an error connecting to Pocket: ${error}`}));
       break;
     case "help":
     default:
@@ -69,6 +84,15 @@ app.get('/auth/:service/:user_id', function(req, res) {
           console.log("updated user", user);
           // TODO: check that the user has a "to-read" shelf and prompt them to set a default shelf if not
         });
+      res.status(200).send("Thank you. You can close this now. <script type='text/javascript'>window.close()</script>");
+      break;
+    case "pocket":
+      var user = datastore.readUser(user_id);
+      pocket.getAccessToken(user.pocket.request_token).then(res => {
+        console.log("got response:", res);
+        datastore.updateUser(user_id, {pocket: {access_token: res.access_token, username: res.username}});
+      })
+      .catch(console.log);
       res.status(200).send("Thank you. You can close this now. <script type='text/javascript'>window.close()</script>");
       break;
     default:
@@ -145,36 +169,47 @@ function authUserToGoodreads(user_id) {
   return false;
 }
 
-function getTitleFromUrl(url) {
-  function isAmazonUrl(url) {
-    return url.match(/^https?:\/\/(\w+\.)?amazon\./) !== null;
-  }
+function isAmazonUrl(url) {
+  return url.match(/^https?:\/\/(\w+\.)?amazon\./) !== null;
+}
 
+function getTitleFromUrl(url) {
   return new Promise((resolve, reject) => {
     if (isAmazonUrl(url)) {
-      request({uri: url, gzip: true},  (error, response, body) => {
-        if (error) {
-          console.log('error:', error); // Print the error if one occurred
-          reject(`request for ${url} returned error: ${error}`);
-        }
-        if (!body && response && response.statusCode !== 200) {
-          console.log('statusCode:', response && response.statusCode);
-          reject(`request for ${url} return response: ${response}`);
-        }
+      // just pull amazon id out of url and search on that
+      var matches = url.match(/\/dp\/(.*?)\//);
+      if (matches) {
+        resolve(matches[1]);
+      } else {
+        reject(`could not find Amazon product code in ${url}`);
+      }
+      return;
+
+//       // pull title (and author?) from Amazon page
+//       request({uri: url, gzip: true},  (error, response, body) => {
+//         if (error) {
+//           console.log('error:', error); // Print the error if one occurred
+//           reject(`request for ${url} returned error: ${error}`);
+//         }
+//         if (!body && response && response.statusCode !== 200) {
+//           console.log('statusCode:', response && response.statusCode);
+//           reject(`request for ${url} return response: ${response}`);
+//         }
         
-        // parse out title
-        // <meta name="title" content="Amazon.com: The Dispossessed: An Ambiguous Utopia (Hainish Cycle Book 5) eBook: Ursula K. Le Guin: Kindle Store" />
-        var matches = body.match(/<meta\s+name\s*=\s*"title"\s+content\s*=\s*"(.*?)"/);
-        //console.log("matches:",matches);
-        if (matches) {
-          var title = matches[1];
-          title = title.replace(/(Amazon\.com:|eBook:|: Kindle Store)\s*/g, ''); // clear out Amazon junk
-          resolve(title);
-        } else {
-          // TODO: respond to user
-          reject(`could not find title in ${url}`);
-        }
-      });
+//         // parse out title
+//         // <meta name="title" content="Amazon.com: The Dispossessed: An Ambiguous Utopia (Hainish Cycle Book 5) eBook: Ursula K. Le Guin: Kindle Store" />
+//         // var matches = body.match(/<meta\s+name\s*=\s*"title"\s+content\s*=\s*"(.*?)"/);
+//         var matches = body.match(/<span id=".*?productTitle"[^>]*?>(.+?)<\/span>/i);
+//         //console.log("matches:",matches);
+//         if (matches) {
+//           var title = matches[1];
+//           // title = entities.decode(title).replace(/\W/g, '').replace(/(Amazoncom|eBooks?|Kindle (edition|Store))/gi, ''); // clear out Amazon junk
+//           resolve(title);
+//         } else {
+//           // TODO: respond to user
+//           reject(`could not find title in ${url}`);
+//         }
+//       });
     } else {            
       reject(`unsupported url ${url}`);
     }
@@ -182,6 +217,31 @@ function getTitleFromUrl(url) {
 }
 
 function importUrl(user_id, url) {
+  if (isAmazonUrl(url)) {
+    return importGoodreadsUrl(user_id, url);
+  } else {
+    return importPocketUrl(user_id, url);
+  }
+}
+
+function importPocketUrl(user_id, url) {
+  return new Promise((resolve, reject) => {
+    var user = datastore.readUser(user_id);
+    if (!(user && user.pocket && user.pocket.access_token)) {
+      reject("Your Pocket account does not appear to be connected. Please do `/readbot connect pocket`");
+    }
+    pocket.addUrl(url, user.pocket.access_token)
+      .then(res => {
+        resolve(`Added ${url} to Pocket`);
+    })
+      .catch(reason => {
+        reject(`Oops, I couldn't add that url to Pocket. Reason: ${reason}`);
+    });
+    
+  });
+}
+
+function importGoodreadsUrl(user_id, url) {
   return new Promise((resolve, reject) => {
     if (!authUserToGoodreads(user_id)) {
       reject("Your Goodreads account does not appear to be connected. Please do `/readbot connect goodreads`");
@@ -194,7 +254,11 @@ function importUrl(user_id, url) {
         var book_id;
         var book_title;
         try {
-          var found_book = response.search.results.work.best_book;
+          var work = response.search.results.work;
+          if (work instanceof Array) {
+            work = work[0];
+          }
+          var found_book = work.best_book;
           book_id = found_book.id._;
           book_title = found_book.title;
         } catch(e) {

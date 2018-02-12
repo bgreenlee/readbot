@@ -5,41 +5,38 @@ const goodreads = require('goodreads-api-node');
 const bodyParser = require('body-parser');
 const request = require('request');
 const { WebClient } = require('@slack/client');
-const Entities = require('html-entities').AllHtmlEntities;
-
 const datastore = require("./lib/datastore");
 const Pocket = require('./lib/pocket');
 
-const entities = new Entities();
 
+// Set up our various API libraries
 const slackWeb = new WebClient(process.env.SLACK_ACCESS_TOKEN);
-
-var gr = goodreads({
+const gr = goodreads({
   key: process.env.GOODREADS_DEVELOPER_KEY,
   secret: process.env.GOODREADS_DEVELOPER_SECRET
 });
 gr.callbackUrl = "https://bookbot.glitch.me/auth/goodreads/";
+const pocket = new Pocket(process.env.POCKET_CONSUMER_KEY);
 
-var pocket = new Pocket(process.env.POCKET_CONSUMER_KEY);
-                        
+// Set up our web server
 let app = express();
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
 
 app.get('/', function (req, res) {
-  res.send('ReadBot!')
+  res.send('Hi! This is Readbot. Please see the <a href="https://github.com/bgreenlee/readbot/blob/master/README.md">README</a> for more information.')
 });
 
-// Slack slash command handler
+// Slack slash command handler — The /readbot command is sent here
 app.post('/command', function(req, res) {
-  // console.log("command params", req.params);
-  console.log("command body", req.body);
+  // check that the message we're getting is valid
   if (req.body.token != process.env.SLACK_VERIFICATION_TOKEN) {
     console.log("Invalid Slack token");
     return;
   }
   let response_url = req.body.response_url;
   let user_id = req.body.user_id;
+  // the command is everything after "/readbot"
   let command = req.body.text.trim().toLowerCase().split(/\s+/).join(' ');
   
   switch(command) {
@@ -70,13 +67,12 @@ app.post('/command', function(req, res) {
   }
 });
 
+// This is the callback endpoint we give to Goodreads and Pocket
 app.get('/auth/:service/:user_id', function(req, res) {
   let user_id = req.params.user_id;
   switch(req.params.service) {
     case "goodreads":
-      // console.log("goodreads response:", req.query);
       let oauth_token = req.query.oauth_token;
-      let authorized = req.query.authorize == "1";
       // exchange this oauth token for an access token
       var user = datastore.readUser(user_id);
       gr.getAccessToken().then(token =>  {
@@ -116,14 +112,13 @@ app.post('/event', function(req, res) {
   switch(event.type) {
     case 'message':
       var message = event;
-      if (event.subtype == 'message_changed') {
+      if (event.subtype == 'message_changed') { // we get this if the message has been edited
         // dammit, Slack
         message = event.message;
         message.channel = event.channel;
       }
       var matches = message.text.match(/(?!<)http.*?(?=[\|>])/g);
       if (matches) {
-        console.log("got urls:", matches);
         datastore.saveMessage(message, matches);
       }
       break;

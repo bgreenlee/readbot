@@ -44,8 +44,8 @@ Then add the `bookmark` reactji to any message containing a supported link (curr
 
 ## TODO
 
-- [] Support for more URL types for Goodreads (i.e. other bookstores, Goodreads itself)
-- [] Support for custom Goodreads shelfs (i.e. not just the default 'to-read')
+- [ ] Support for more URL types for Goodreads (i.e. other bookstores, Goodreads itself)
+- [ ] Support for custom Goodreads shelfs (i.e. not just the default 'to-read')
 
 ## Author
 

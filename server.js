@@ -47,9 +47,9 @@ app.post('/command', function(req, res) {
       break;
     case "connect pocket":
       var redirect_uri = `https://bookbot.glitch.me/auth/pocket/${user_id}`;
-      pocket.getRequestToken(redirect_uri).then(res => {
-        var url = pocket.getUserAuthUrl(res.code, redirect_uri);
-        datastore.updateUser(user_id, {pocket: {request_token: res.code}});
+      pocket.getRequestToken(redirect_uri).then(token => {
+        var url = pocket.getUserAuthUrl(token.code, redirect_uri);
+        datastore.updateUser(user_id, {pocket: {request_token: token.code}});
         res.send({channel: user_id, text: `Please visit ${url} to authenticate to Pocket`});
       })
       .catch(error => res.send({channel: user_id, text: `There was an error connecting to Pocket: ${error}`}));
@@ -81,8 +81,8 @@ app.get('/auth/:service/:user_id', function(req, res) {
       break;
     case "pocket":
       user = datastore.readUser(user_id);
-      pocket.getAccessToken(user.pocket.request_token).then(res => {
-        datastore.updateUser(user_id, {pocket: {access_token: res.access_token, username: res.username}});
+      pocket.getAccessToken(user.pocket.request_token).then(token => {
+        datastore.updateUser(user_id, {pocket: {access_token: token.access_token, username: token.username}});
       })
       .catch(console.log);
       res.status(200).send("Thank you. You can close this now. <script type='text/javascript'>window.close()</script>");

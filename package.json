@@ -14,8 +14,7 @@
     "deepmerge": "^2.0.1",
     "better-sqlite3": "^4.1.0",
     "goodreads-api-node": "bgreenlee/goodreads-api-node#HEAD",
-    "@slack/client": "^3.16.0",
-    "html-entities": "^1.2.1"
+    "@slack/client": "^3.16.0"
   },
   "license": "MIT",
   "engines": {

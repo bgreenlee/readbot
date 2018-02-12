@@ -1,9 +1,9 @@
+/* global require, process */
 "use strict";
 
 const express = require('express');
 const goodreads = require('goodreads-api-node');
 const bodyParser = require('body-parser');
-const request = require('request');
 const { WebClient } = require('@slack/client');
 const datastore = require("./lib/datastore");
 const Pocket = require('./lib/pocket');
@@ -34,11 +34,10 @@ app.post('/command', function(req, res) {
     console.log("Invalid Slack token");
     return;
   }
-  let response_url = req.body.response_url;
   let user_id = req.body.user_id;
   // the command is everything after "/readbot"
   let command = req.body.text.trim().toLowerCase().split(/\s+/).join(' ');
-  
+
   switch(command) {
     case "connect goodreads":
       gr.initOAuth(gr.callbackUrl + user_id);
@@ -48,14 +47,13 @@ app.post('/command', function(req, res) {
       break;
     case "connect pocket":
       var redirect_uri = `https://bookbot.glitch.me/auth/pocket/${user_id}`;
-      pocket.getRequestToken(redirect_uri).then(token => {
-        var url = pocket.getUserAuthUrl(token, redirect_uri);
-        datastore.updateUser(user_id, {pocket: {request_token: token}});
+      pocket.getRequestToken(redirect_uri).then(res => {
+        var url = pocket.getUserAuthUrl(res.code, redirect_uri);
+        datastore.updateUser(user_id, {pocket: {request_token: res.code}});
         res.send({channel: user_id, text: `Please visit ${url} to authenticate to Pocket`});
       })
       .catch(error => res.send({channel: user_id, text: `There was an error connecting to Pocket: ${error}`}));
       break;
-    case "help":
     default:
       res.send({
         channel: user_id,
@@ -70,23 +68,20 @@ app.post('/command', function(req, res) {
 // This is the callback endpoint we give to Goodreads and Pocket
 app.get('/auth/:service/:user_id', function(req, res) {
   let user_id = req.params.user_id;
+  var user;
   switch(req.params.service) {
     case "goodreads":
-      let oauth_token = req.query.oauth_token;
       // exchange this oauth token for an access token
-      var user = datastore.readUser(user_id);
+      user = datastore.readUser(user_id);
       gr.getAccessToken().then(token =>  {
-          console.log("got tokens:", token);
           user = datastore.updateUser(user_id, {goodreads:{access_token:token.accessToken, access_token_secret:token.accessTokenSecret}});
-          console.log("updated user", user);
           // TODO: check that the user has a "to-read" shelf and prompt them to set a default shelf if not
         });
       res.status(200).send("Thank you. You can close this now. <script type='text/javascript'>window.close()</script>");
       break;
     case "pocket":
-      var user = datastore.readUser(user_id);
+      user = datastore.readUser(user_id);
       pocket.getAccessToken(user.pocket.request_token).then(res => {
-        console.log("got response:", res);
         datastore.updateUser(user_id, {pocket: {access_token: res.access_token, username: res.username}});
       })
       .catch(console.log);
@@ -98,17 +93,17 @@ app.get('/auth/:service/:user_id', function(req, res) {
 });
 
 app.post('/event', function(req, res) {
-  console.log("event:", req.body);
   if (req.body.token != process.env.SLACK_VERIFICATION_TOKEN) {
     console.log("Invalid Slack token");
     return;
   }
-  
+
   if (req.body.type == 'url_verification') {
     return res.status(200).send(event.challenge);
   }
-  
+
   var event = req.body.event;
+  var item;
   switch(event.type) {
     case 'message':
       var message = event;
@@ -124,12 +119,10 @@ app.post('/event', function(req, res) {
       break;
     case 'reaction_added':
       if (event.reaction == 'bookmark') {
-        var item = event.item;
+        item = event.item;
         var channel = item.channel;
         var user_id = event.user;
-        console.log(`added bookmark for user ${user_id}, item:`, item);
         var urls = datastore.getUrlsForMessage(item);
-        console.log("found urls:", urls);
         urls.forEach((url) => {
           importUrl(user_id, url).then(response => {
             slackWeb.chat.postEphemeral(channel, response, user_id)
@@ -138,24 +131,28 @@ app.post('/event', function(req, res) {
           .catch(err => {
             slackWeb.chat.postEphemeral(channel, err, user_id)
                 .catch(console.error);
-          })
+          });
         });
       }
       break;
     case 'reaction_removed':
       if (event.reaction == 'bookmark') {
-        var item = event.item;
-        console.log("removed bookmark for item:", item);
-        // TODO: should we remove the book from Goodreads? I'm thinking no.
+        // TODO: We could remove the previously bookmarked url from Goodreads/Pocket,
+        // but I'm not inclined to right now.
       }
       break;
   }
   res.sendStatus(200);
 });
 
+/**
+ * authUserToGoodreads updates the goodreads api object with the user's access token
+ * @param  {string} user_id The Slack user_id
+ * @return {Boolean}        true if successful, meaning the user has authed to Goodreads
+ */
 function authUserToGoodreads(user_id) {
   var user = datastore.readUser(user_id);
-  
+
   if (user && user.goodreads && user.goodreads.access_token) {
     gr.setAccessToken({ACCESS_TOKEN: user.goodreads.access_token, ACCESS_TOKEN_SECRET: user.goodreads.access_token_secret});
     gr.initOAuth();
@@ -165,10 +162,22 @@ function authUserToGoodreads(user_id) {
   return false;
 }
 
+/**
+ * isAmazonUrl returns true if the url looks like an Amazon URL
+ * @param  {string}  url
+ * @return {Boolean}     true if it is an Amazon URL
+ */
 function isAmazonUrl(url) {
   return url.match(/^https?:\/\/(\w+\.)?amazon\./) !== null;
 }
 
+/**
+ * getTitleFromUrl originally opened the Amazon url and tried to parse out the title and author from
+ * the HTML, but it turns out that the Amazon product id (ASIN) is right in the URL, and Goodreads
+ * recognizes those. \o/
+ * @param  {string} url
+ * @return {Promise}      A promise that resolves to the document "title" (ASIN)
+ */
 function getTitleFromUrl(url) {
   return new Promise((resolve, reject) => {
     if (isAmazonUrl(url)) {
@@ -180,37 +189,18 @@ function getTitleFromUrl(url) {
         reject(`could not find Amazon product code in ${url}`);
       }
       return;
-
-//       // pull title (and author?) from Amazon page
-//       request({uri: url, gzip: true},  (error, response, body) => {
-//         if (error) {
-//           console.log('error:', error); // Print the error if one occurred
-//           reject(`request for ${url} returned error: ${error}`);
-//         }
-//         if (!body && response && response.statusCode !== 200) {
-//           console.log('statusCode:', response && response.statusCode);
-//           reject(`request for ${url} return response: ${response}`);
-//         }
-        
-//         // parse out title
-//         // <meta name="title" content="Amazon.com: The Dispossessed: An Ambiguous Utopia (Hainish Cycle Book 5) eBook: Ursula K. Le Guin: Kindle Store" />
-//         // var matches = body.match(/<meta\s+name\s*=\s*"title"\s+content\s*=\s*"(.*?)"/);
-//         var matches = body.match(/<span id=".*?productTitle"[^>]*?>(.+?)<\/span>/i);
-//         //console.log("matches:",matches);
-//         if (matches) {
-//           var title = matches[1];
-//           // title = entities.decode(title).replace(/\W/g, '').replace(/(Amazoncom|eBooks?|Kindle (edition|Store))/gi, ''); // clear out Amazon junk
-//           resolve(title);
-//         } else {
-//           reject(`could not find title in ${url}`);
-//         }
-//       });
-    } else {            
+    } else {
       reject(`unsupported url ${url}`);
     }
   });
 }
 
+/**
+ * importUrl imports the given url into the user's appropriate account (Goodreads or Pocket)
+ * @param  {string} user_id Slack user_id
+ * @param  {string} url     URL to import
+ * @return {Promise}        Promise returned by `importPocketUrl` or `importGoodreadsUrl`
+ */
 function importUrl(user_id, url) {
   if (isAmazonUrl(url)) {
     return importGoodreadsUrl(user_id, url);
@@ -219,6 +209,12 @@ function importUrl(user_id, url) {
   }
 }
 
+/**
+ * importPocketUrl imports the given url into the user's Pocket account
+ * @param  {string} user_id Slack user_id
+ * @param  {string} url     URL to import
+ * @return {Promise}        Promise that resolves to a message saying the url was successfully imported
+ */
 function importPocketUrl(user_id, url) {
   return new Promise((resolve, reject) => {
     var user = datastore.readUser(user_id);
@@ -232,10 +228,17 @@ function importPocketUrl(user_id, url) {
       .catch(reason => {
         reject(`Oops, I couldn't add that url to Pocket. Reason: ${reason}`);
     });
-    
+
   });
 }
 
+/**
+ * importGoodreadsUrl imports the given url into the user's Goodreads account, adding it to their
+ * to-read shelf
+ * @param  {string} user_id Slack user_id
+ * @param  {string} url     URL to import
+ * @return {Promise}        Promise that resolves to a message saying the url was successfully imported
+ */
 function importGoodreadsUrl(user_id, url) {
   return new Promise((resolve, reject) => {
     if (!authUserToGoodreads(user_id)) {
@@ -245,7 +248,6 @@ function importGoodreadsUrl(user_id, url) {
     let shelf = "to-read";
     getTitleFromUrl(url).then(title => {
       gr.searchBooks({q: title}).then(response => {
-        console.log("goodreads response:", JSON.stringify(response));
         var book_id;
         var book_title;
         try {
@@ -262,7 +264,6 @@ function importGoodreadsUrl(user_id, url) {
 
         if (book_id) {
           // TODO: handle the case where multiple matches are found? Could give the user a list and ask them to pick one, or provide them with a search link
-          console.log("book id", book_id);
           // TODO: use the user's preferred shelf, if set
           // TODO: handle the case where the shelf doesn't exist (at least return an error to the user)
           gr.addBookToShelf(book_id, shelf)
@@ -271,14 +272,11 @@ function importGoodreadsUrl(user_id, url) {
               resolve(`Added <https://www.goodreads.com/book/show/${book_id}|${book_title}> to your _${shelf}_ shelf on Goodreads`);
             })
             .catch(err => {
-              console.log("addBookToShelf error:", err);
               reject(`Arg, Goodreads gave me an error when I tried to add the book to your shelf. It said "${err}." ¯\_(ツ)_/¯`);
           });
         }
       })
       .catch(reason => {
-        // TODO: give feedback if search failed
-        console.error("goodreads failed:", reason);
         reject(`Shoot. Goodreads gave me an error when I tried to search for that book. It said "${reason}."`);
       });
     })
@@ -288,7 +286,7 @@ function importGoodreadsUrl(user_id, url) {
   });
 }
 
-// Set Express to listen out for HTTP requests
+// Start up the server
 var server = app.listen(process.env.PORT || 3000, function () {
   console.log("Listening on port %s", server.address().port);
 });

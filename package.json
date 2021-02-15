@@ -8,13 +8,13 @@
   },
   "author": "Brad Greenlee <brad@footle.org>",
   "dependencies": {
-    "request": "^2.83.0",
-    "express": "^4.16.2",
-    "body-parser": "^1.18.2",
-    "deepmerge": "^2.0.1",
+    "request": "^2.88.2",
+    "express": "^4.17.1",
+    "body-parser": "^1.19.0",
+    "deepmerge": "^4.2.2",
     "better-sqlite3": "^4.1.0",
     "goodreads-api-node": "bgreenlee/goodreads-api-node#HEAD",
-    "@slack/client": "^3.16.0"
+    "@slack/web-api": "^6.0.0"
   },
   "license": "MIT",
   "engines": {

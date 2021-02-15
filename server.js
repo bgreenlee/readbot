@@ -4,7 +4,7 @@
 const express = require('express');
 const goodreads = require('goodreads-api-node');
 const bodyParser = require('body-parser');
-const { WebClient } = require('@slack/client');
+const { WebClient } = require('@slack/web-api');
 const datastore = require("./lib/datastore");
 const Pocket = require('./lib/pocket');
 
@@ -112,9 +112,11 @@ app.post('/event', function(req, res) {
         message = event.message;
         message.channel = event.channel;
       }
-      var matches = message.text.match(/(?!<)http.*?(?=[\|>])/g);
-      if (matches) {
-        datastore.saveMessage(message, matches);
+      if ("text" in message) {
+        var matches = message.text.match(/(?!<)http.*?(?=[\|>])/g);
+        if (matches) {
+          datastore.saveMessage(message, matches);
+        }
       }
       break;
     case 'reaction_added':
@@ -125,12 +127,18 @@ app.post('/event', function(req, res) {
         var urls = datastore.getUrlsForMessage(item);
         urls.forEach((url) => {
           importUrl(user_id, url).then(response => {
-            slackWeb.chat.postEphemeral(channel, response, user_id)
-                .catch(console.error);
+            slackWeb.chat.postEphemeral({
+              channel: channel,
+              text: response,
+              user: user_id
+            }).catch(console.error);
           })
           .catch(err => {
-            slackWeb.chat.postEphemeral(channel, err, user_id)
-                .catch(console.error);
+            slackWeb.chat.postEphemeral({
+              channel: channel,
+              text: err,
+              user: user_id
+            }).catch(console.error);
           });
         });
       }
